@@ -58,6 +58,26 @@ func (s sqliteStore) GetAllWallet() ([]model.UserWallet, error) {
 	return result, nil
 }
 
+func (s sqliteStore) GetWallet(sender string) (model.UserWallet, error) {
+	stmt, err := s.db.Prepare(`
+		SELECT address FROM wallet
+		WHERE address = ?
+	`)
+	if err != nil {
+		return model.UserWallet{}, err
+	}
+	defer stmt.Close()
+	var addr string
+	err = stmt.QueryRow(sender).Scan(&addr)
+	if err != nil {
+		return model.UserWallet{}, err
+	}
+
+	return model.UserWallet{
+		Sender: addr,
+	}, nil
+}
+
 func NewStore(db *sql.DB) store.Store {
 	return sqliteStore{db: db}
 }

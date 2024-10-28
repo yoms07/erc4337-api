@@ -129,6 +129,7 @@ func main() {
 	contracts.SetPublicAndPrivateKey(publicKey, privateKey)
 	contracts.SetRPCClient(client)
 	contracts.SetPaymasterSignerPublicAndPrivateKey(paymasterPublicKey, paymasterPrivateKey)
+	contracts.SetPaymasterOwnerPublicAndPrivateKey(publicKey, privateKey)
 
 	u := usecase.NewUseCase(contracts, bundler, client)
 

@@ -10,6 +10,7 @@ import (
 	"web3-account-abstraction-api/generated/abi/account"
 	"web3-account-abstraction-api/generated/abi/accountfactory"
 	"web3-account-abstraction-api/generated/abi/entrypoint"
+	"web3-account-abstraction-api/generated/abi/erc20"
 	"web3-account-abstraction-api/generated/abi/paymaster"
 	"web3-account-abstraction-api/internal/model"
 
@@ -38,6 +39,9 @@ type Contracts struct {
 	paymasterSignerPrivateKey *ecdsa.PrivateKey
 	paymasterSignerPublicKey  *ecdsa.PublicKey
 
+	paymasterOwnerPrivateKey *ecdsa.PrivateKey
+	paymasterOwnerPublicKey  *ecdsa.PublicKey
+
 	ownerAddress          Address
 	EntryPointAddress     Address
 	PaymasterAddress      Address
@@ -60,6 +64,11 @@ func (c *Contracts) SetPublicAndPrivateKey(publicKey *ecdsa.PublicKey, privateKe
 func (c *Contracts) SetPaymasterSignerPublicAndPrivateKey(publicKey *ecdsa.PublicKey, privateKey *ecdsa.PrivateKey) {
 	c.paymasterSignerPrivateKey = privateKey
 	c.paymasterSignerPublicKey = publicKey
+}
+
+func (c *Contracts) SetPaymasterOwnerPublicAndPrivateKey(publicKey *ecdsa.PublicKey, privateKey *ecdsa.PrivateKey) {
+	c.paymasterOwnerPrivateKey = privateKey
+	c.paymasterOwnerPublicKey = publicKey
 }
 
 func (c *Contracts) SetRPCClient(client *ethclient.Client) {
@@ -192,4 +201,56 @@ func (c *Contracts) personalSign(data []byte, privateKey *ecdsa.PrivateKey) ([]b
 
 	signatureBytes[64] += 27
 	return signatureBytes, nil
+}
+
+func (c *Contracts) getValueInToken(amountInETH *big.Int) *big.Int {
+	return amountInETH.Div(amountInETH, big.NewInt(100))
+}
+
+func (c *Contracts) MintToken(addr common.Address, amountInETH *big.Int) error {
+	tokenValue := c.getValueInToken(amountInETH)
+	auth, err := bind.NewKeyedTransactorWithChainID(c.paymasterOwnerPrivateKey, c.chainId)
+	if err != nil {
+		return err
+	}
+
+	nonce, err := c.getNonce()
+	if err != nil {
+		return err
+	}
+
+	gasPrice, err := c.client.SuggestGasPrice(context.Background())
+	if err != nil {
+		return err
+	}
+
+	// Set default value
+	auth.Nonce = big.NewInt(int64(nonce))
+	auth.Value = big.NewInt(0)
+	auth.GasLimit = uint64(100_000)
+	auth.GasPrice = gasPrice.Mul(gasPrice, big.NewInt(2))
+
+	tx, err := c.Paymaster.MintTokens(auth, addr, tokenValue)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Mint Token Hash: %v\n", tx.Hash())
+	bind.WaitMined(context.Background(), c.client, tx)
+
+	return err
+}
+
+func (c *Contracts) GetETHBalance(addr common.Address) (*big.Int, error) {
+	return c.client.BalanceAt(context.Background(), addr, nil)
+}
+
+func (c *Contracts) GetERC20Balance(addr common.Address, tokenAddr common.Address) (*big.Int, error) {
+	erc, err := erc20.NewERC20(tokenAddr, c.client)
+	if err != nil {
+		return nil, err
+	}
+
+	return erc.BalanceOf(&bind.CallOpts{
+		Pending: false,
+	}, addr)
 }

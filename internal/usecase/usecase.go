@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"math/big"
 	"web3-account-abstraction-api/generated/abi/entrypoint"
@@ -28,13 +29,17 @@ type Usecase struct {
 	contracts contract.Contracts
 	bundler   bundler.Bundler
 	client    *ethclient.Client
+
+	initialETH *big.Int
 }
 
 func NewUseCase(contracts contract.Contracts, bundler bundler.Bundler, client *ethclient.Client) Usecase {
+	initialETH, _ := ether.Parse("1 ether")
 	return Usecase{
-		contracts: contracts,
-		bundler:   bundler,
-		client:    client,
+		contracts:  contracts,
+		bundler:    bundler,
+		client:     client,
+		initialETH: initialETH,
 	}
 }
 
@@ -56,23 +61,28 @@ func (u *Usecase) SendUserOperation(simpleOp SimpleUserOperation) (string, error
 		}
 	}
 
-	factory := u.contracts.AccountFactoryAddress
-	factoryData, err := u.contracts.GetAccountFactoryCallData(
-		u.contracts.OwnerAddress(),
-		[32]byte(simpleOp.WalletSalt),
-		u.contracts.EntryPointAddress)
-	if err != nil {
-		return "", err
-	}
+	factory := common.HexToAddress("0x")
+	factoryData := []byte{}
 
 	contractCode, err := u.client.CodeAt(context.Background(), sender, nil)
 	if err != nil {
 		return "", err
 	}
 
-	if len(contractCode) > 0 {
-		factory = common.HexToAddress("0x")
-		factoryData = []byte{}
+	fmt.Printf("sender: %s\n", sender.Hex())
+	if len(contractCode) == 0 {
+		factory = u.contracts.AccountFactoryAddress
+		factoryData, err = u.contracts.GetAccountFactoryCallData(
+			u.contracts.OwnerAddress(),
+			[32]byte(simpleOp.WalletSalt),
+			u.contracts.EntryPointAddress)
+		if err != nil {
+			return "", err
+		}
+		err = u.contracts.MintToken(sender, u.initialETH)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	nonce, err := u.contracts.EntryPoint.GetNonce(&bind.CallOpts{

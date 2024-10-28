@@ -2,7 +2,9 @@ package api
 
 import (
 	"fmt"
+	"math/big"
 	"net/http"
+	"web3-account-abstraction-api/generated/abi/account"
 	contract "web3-account-abstraction-api/internal/contracts"
 	"web3-account-abstraction-api/internal/model"
 	"web3-account-abstraction-api/internal/store"
@@ -57,6 +59,7 @@ func SetupAPI(e *echo.Echo, store store.Store, u usecase.Usecase, contracts cont
 
 		return c.JSON(http.StatusOK, wallet)
 	})
+
 	type SendPayload struct {
 		CallData string `json:"callData"`
 	}
@@ -93,12 +96,103 @@ func SetupAPI(e *echo.Echo, store store.Store, u usecase.Usecase, contracts cont
 		}
 		return c.String(http.StatusOK, fmt.Sprintf("%v", status))
 	})
-	e.GET("/wallet/tx/eth", func(c echo.Context) error {
-		return c.String(http.StatusOK, "ok")
+	e.GET("/wallet/:wallet/eth/balance", func(c echo.Context) error {
+		walletAddress := c.Param("wallet")
+		_, err := store.GetWallet(walletAddress)
+		if err != nil {
+			return handleError(c, err)
+		}
+		balance, err := contracts.GetETHBalance(common.HexToAddress(walletAddress))
+		if err != nil {
+			return handleError(c, err)
+		}
+		return c.String(http.StatusOK, balance.String())
 	})
-	// get erc20 address
-	e.GET("/wallet/tx/:address", func(c echo.Context) error {
-		return c.String(http.StatusOK, "ok")
+	e.GET("/wallet/:wallet/:tokenAddress/balance", func(c echo.Context) error {
+		walletAddress := c.Param("wallet")
+		tokenAddress := c.Param("tokenAddress")
+		_, err := store.GetWallet(walletAddress)
+		if err != nil {
+			return handleError(c, err)
+		}
+
+		balance, err := contracts.GetERC20Balance(common.HexToAddress(walletAddress), common.HexToAddress(tokenAddress))
+		if err != nil {
+			handleError(c, err)
+		}
+		return c.String(http.StatusOK, balance.String())
+	})
+
+	type TransferPayload struct {
+		Amount int    `json:"amount"`
+		To     string `json:"to"`
+	}
+	e.POST("/wallet/:wallet/eth/transfer", func(c echo.Context) error {
+		walletAddress := c.Param("wallet")
+		var payload TransferPayload
+		err := c.Bind(&payload)
+		if err != nil {
+			return handleError(c, err)
+		}
+		_, err = store.GetWallet(walletAddress)
+		if err != nil {
+			return handleError(c, err)
+		}
+
+		abi, _ := account.AccountMetaData.GetAbi()
+		callData, err := abi.Pack("withdrawETH", common.HexToAddress(payload.To), big.NewInt(int64(payload.Amount)))
+		if err != nil {
+			return handleError(c, err)
+		}
+
+		simpleOp := usecase.SimpleUserOperation{
+			Sender:        (*common.Address)(common.FromHex(walletAddress)),
+			CallData:      callData,
+			Paymaster:     &contracts.PaymasterAddress,
+			PaymasterData: common.FromHex("0x"),
+		}
+
+		hash, err := u.SendUserOperation(simpleOp)
+		if err != nil {
+			return handleError(c, err)
+		}
+		return c.String(http.StatusOK, hash)
+	})
+
+	e.POST("/wallet/:wallet/:tokenAddress/transfer", func(c echo.Context) error {
+		walletAddress := c.Param("wallet")
+		tokenAddress := c.Param("tokenAddress")
+		var payload TransferPayload
+		err := c.Bind(&payload)
+		if err != nil {
+			return handleError(c, err)
+		}
+		_, err = store.GetWallet(walletAddress)
+		if err != nil {
+			return handleError(c, err)
+		}
+
+		abi, err := account.AccountMetaData.GetAbi()
+		if err != nil {
+			return handleError(c, err)
+		}
+		callData, err := abi.Pack("withdrawERC20", common.HexToAddress(tokenAddress), common.HexToAddress(payload.To), big.NewInt(int64(payload.Amount)))
+		if err != nil {
+			return handleError(c, err)
+		}
+
+		simpleOp := usecase.SimpleUserOperation{
+			Sender:        (*common.Address)(common.FromHex(walletAddress)),
+			CallData:      callData,
+			Paymaster:     &contracts.PaymasterAddress,
+			PaymasterData: common.FromHex("0x"),
+		}
+
+		hash, err := u.SendUserOperation(simpleOp)
+		if err != nil {
+			return handleError(c, err)
+		}
+		return c.String(http.StatusOK, hash)
 	})
 
 	return nil
